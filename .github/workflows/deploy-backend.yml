@@ -1,0 +1,52 @@
+name: Deploy Backend
+
+on:
+  repository_dispatch:
+    types: [deploy-backend]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+
+      - name: Generar .env con los secretos
+        env:
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          envsubst < backend/.env.template > backend/.env
+          chmod 600 backend/.env
+          echo ".env generado (secreto, no se sube)"
+
+      - name: Copiar docker-compose y .env al EC2 backend
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST_BACKEND }}
+          username: ${{ secrets.SSH_USER_BACKEND }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_BACKEND }}
+          port: 22
+          insecure_skip_verify: true
+          source: "backend/"
+          strip_components: 1
+          target: "/opt/inmobiliarias/backend"
+
+      - name: Levantar/actualizar servicios
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST_BACKEND }}
+          username: ${{ secrets.SSH_USER_BACKEND }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_BACKEND }}
+          port: 22
+          insecure_skip_verify: true
+          script: |
+            cd /opt/inmobiliarias/backend
+            sudo docker compose -p backend pull
+            sudo docker compose -p backend up -d
+            echo "--- estado ---"
+            sudo docker compose -p backend ps

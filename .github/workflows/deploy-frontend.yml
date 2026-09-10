@@ -1,0 +1,49 @@
+name: Deploy Frontend
+
+on:
+  repository_dispatch:
+    types: [deploy-frontend]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+
+      - name: Generar .env con los secretos
+        env:
+          API_GATEWAY_URL: ${{ secrets.API_GATEWAY_URL }}
+          SITENAME: ${{ secrets.SITENAME }}
+        run: |
+          envsubst < frontend/.env.template > frontend/.env
+          chmod 600 frontend/.env
+          echo ".env generado (secreto, no se sube)"
+
+      - name: Copiar docker-compose y .env al EC2 frontend
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST_FRONTEND }}
+          username: ${{ secrets.SSH_USER_FRONTEND }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_FRONTEND }}
+          port: 22
+          insecure_skip_verify: true
+          source: "frontend/"
+          strip_components: 1
+          target: "/opt/inmobiliarias/frontend"
+
+      - name: Levantar/actualizar servicios
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST_FRONTEND }}
+          username: ${{ secrets.SSH_USER_FRONTEND }}
+          key: ${{ secrets.SSH_PRIVATE_KEY_FRONTEND }}
+          port: 22
+          insecure_skip_verify: true
+          script: |
+            cd /opt/inmobiliarias/frontend
+            sudo docker compose -p frontend pull
+            sudo docker compose -p frontend up -d
+            echo "--- estado ---"
+            sudo docker compose -p frontend ps

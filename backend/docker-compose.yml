@@ -1,0 +1,67 @@
+# docker compose del BACKEND que usa el EC2 (34.204.64.107).
+# Las imagenes llegan desde Docker Hub, subidas por GitHub Actions.
+#
+# El .env se genera automaticamente en el deploy (backend/.env.template +
+# secretos de GitHub). No se guarda aqui.
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: inmobiliarias-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: America/Santiago
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - inmob-red
+
+  inmobiliaria-service:
+    image: mariacarrero/inmobiliaria-service:latest
+    container_name: inmobiliaria-service
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: America/Santiago
+    expose:
+      - "8081"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - inmob-red
+
+  api-gateway:
+    image: mariacarrero/api-gateway:latest
+    container_name: api-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      BACKEND_URL: http://inmobiliaria-service:8081
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      TZ: America/Santiago
+    depends_on:
+      - inmobiliaria-service
+    networks:
+      - inmob-red
+
+networks:
+  inmob-red:
+    driver: bridge
+
+volumes:
+  pgdata:

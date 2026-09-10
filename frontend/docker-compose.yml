@@ -1,0 +1,47 @@
+# docker compose del FRONTEND que usa el EC2 del frontend (54.156.18.1).
+# - nginx: static + proxy /api -> API_GATEWAY_URL (sin exponer puerto publico)
+# - caddy : termina TLS (Let's Encrypt) en 80/443 delante de nginx.
+services:
+
+  frontend:
+    image: mariacarrero/inmobiliarias-frontend:latest
+    container_name: inmobiliarias-frontend
+    restart: unless-stopped
+    environment:
+      # Sustituida por nginx al arrancar (nginx.conf template). Ej:
+      # http://34.204.64.107:8080
+      API_GATEWAY_URL: ${API_GATEWAY_URL}
+      TZ: America/Santiago
+    expose:
+      - "80"
+    networks:
+      - frontend-red
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: inmobiliarias-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # Subdominio DuckDNS generado desde el .env (ej: inmobiliariasduoc.duckdns.org)
+      SITENAME: ${SITENAME}
+      TZ: America/Santiago
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    networks:
+      - frontend-red
+
+networks:
+  frontend-red:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
