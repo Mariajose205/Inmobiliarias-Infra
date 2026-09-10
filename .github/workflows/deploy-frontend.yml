@@ -28,7 +28,7 @@ jobs:
           username: ${{ secrets.SSH_USER_FRONTEND }}
           key: ${{ secrets.SSH_PRIVATE_KEY_FRONTEND }}
           port: 22
-          insecure_skip_verify: true
+          
           source: "frontend/"
           strip_components: 1
           target: "/opt/inmobiliarias/frontend"
@@ -40,7 +40,7 @@ jobs:
           username: ${{ secrets.SSH_USER_FRONTEND }}
           key: ${{ secrets.SSH_PRIVATE_KEY_FRONTEND }}
           port: 22
-          insecure_skip_verify: true
+          
           script: |
             cd /opt/inmobiliarias/frontend
             sudo docker compose -p frontend pull

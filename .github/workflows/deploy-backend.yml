@@ -31,7 +31,7 @@ jobs:
           username: ${{ secrets.SSH_USER_BACKEND }}
           key: ${{ secrets.SSH_PRIVATE_KEY_BACKEND }}
           port: 22
-          insecure_skip_verify: true
+          
           source: "backend/"
           strip_components: 1
           target: "/opt/inmobiliarias/backend"
@@ -43,7 +43,7 @@ jobs:
           username: ${{ secrets.SSH_USER_BACKEND }}
           key: ${{ secrets.SSH_PRIVATE_KEY_BACKEND }}
           port: 22
-          insecure_skip_verify: true
+          
           script: |
             cd /opt/inmobiliarias/backend
             sudo docker compose -p backend pull
