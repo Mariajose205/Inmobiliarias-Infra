@@ -21,8 +21,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           envsubst < backend/.env.template > backend/.env
-          chmod 600 backend/.env
-          echo ".env generado (secreto, no se sube)"
+          echo ".env generado (el chmod lo aplica el servidor)"
 
       - name: Copiar docker-compose y .env al EC2 backend
         uses: appleboy/scp-action@v0.1.7
@@ -46,6 +45,7 @@ jobs:
           
           script: |
             cd /opt/inmobiliarias/backend
+            chmod 600 .env
             sudo docker compose -p backend pull
             sudo docker compose -p backend up -d
             echo "--- estado ---"

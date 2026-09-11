@@ -18,8 +18,7 @@ jobs:
           SITENAME: ${{ secrets.SITENAME }}
         run: |
           envsubst < frontend/.env.template > frontend/.env
-          chmod 600 frontend/.env
-          echo ".env generado (secreto, no se sube)"
+          echo ".env generado (el chmod lo aplica el servidor)"
 
       - name: Copiar docker-compose y .env al EC2 frontend
         uses: appleboy/scp-action@v0.1.7
@@ -43,6 +42,7 @@ jobs:
           
           script: |
             cd /opt/inmobiliarias/frontend
+            chmod 600 .env
             sudo docker compose -p frontend pull
             sudo docker compose -p frontend up -d
             echo "--- estado ---"
