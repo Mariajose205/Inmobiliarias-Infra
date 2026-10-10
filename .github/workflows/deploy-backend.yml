@@ -17,6 +17,14 @@ jobs:
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_OID: ${{ secrets.ADMIN_OID }}
+          CORREDOR_EMAIL: ${{ secrets.CORREDOR_EMAIL }}
+          CORREDOR_OID: ${{ secrets.CORREDOR_OID }}
+          RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASS: ${{ secrets.RABBITMQ_PASS }}
+          # Se conservan por compatibilidad; el auth actual es el JWT de Azure
+          # Entra ID validado por API Gateway (no requieren JWT_SECRET).
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |

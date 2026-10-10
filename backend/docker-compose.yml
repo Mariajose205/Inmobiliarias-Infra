@@ -1,5 +1,9 @@
-# docker compose del BACKEND que usa el EC2 (34.204.64.107).
+# docker compose del BACKEND que usa el EC2 de backend.
 # Las imagenes llegan desde Docker Hub, subidas por GitHub Actions.
+#
+# Ya NO existe el servicio api-gateway: la API vive en AWS como API Gateway
+# (HTTP API) y es la unica que entra al microservicio. Ver
+# backend/aws/api-gateway.yaml.
 #
 # El .env se genera automaticamente en el deploy (backend/.env.template +
 # secretos de GitHub). No se guarda aqui.
@@ -24,6 +28,51 @@ services:
     networks:
       - inmob-red
 
+  # RabbitMQ: broker del flujo de informes (exchange fanout + direct, colas y
+  # DLQ). El 5672 (AMQP) queda interno a la red del compose; el 15672 (consola)
+  # se publica para administracion y conviene restringirlo por Security Group.
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: inmobiliarias-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      TZ: America/Santiago
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - inmob-red
+
+  # Servidor SMTP de captura. Reemplazar por un SMTP real (SES, etc.) en un
+  # entorno productivo real; aqui permite ver los correos en http://<EC2>:8025.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: inmobiliarias-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - inmob-red
+
+  # IMPORTANTE: el puerto 8081 se publica para que API Gateway lo alcance por el
+  # VPC Link, pero NO debe quedar abierto a internet. El Security Group del EC2
+  # debe permitir el puerto 8081 solo desde el VPC Link / NLB y desde la VPC, y
+  # nunca desde 0.0.0.0/0. El microservicio tampoco aplica CORS: el unico
+  # cliente legitimo es API Gateway.
+  #
+  # Para atar el puerto a la IP privada del EC2 en vez de a todas sus
+  # interfaces, reemplazar el bind por:
+  #   - "${BACKEND_PRIVATE_IP}:8081:8081"
   inmobiliaria-service:
     image: mariacarrero/inmobiliaria-service:latest
     container_name: inmobiliaria-service
@@ -33,29 +82,28 @@ services:
       DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Identidad y rol que el microservicio usa para la matriz de permisos.
+      # La autenticacion del token la hace API Gateway.
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_OID: ${ADMIN_OID}
+      CORREDOR_EMAIL: ${CORREDOR_EMAIL}
+      CORREDOR_OID: ${CORREDOR_OID}
+      # Conexion al broker y al SMTP dentro de la red del compose.
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      MAIL_HOST: mailhog
+      MAIL_PORT: "1025"
+      INFORMES_DIR: /app/informes
       TZ: America/Santiago
-    expose:
-      - "8081"
+    ports:
+      - "8081:8081"
     depends_on:
       db:
         condition: service_healthy
-    networks:
-      - inmob-red
-
-  api-gateway:
-    image: mariacarrero/api-gateway:latest
-    container_name: api-gateway
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
-      BACKEND_URL: http://inmobiliaria-service:8081
-      JWT_SECRET: ${JWT_SECRET}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      TZ: America/Santiago
-    depends_on:
-      - inmobiliaria-service
+      rabbitmq:
+        condition: service_healthy
     networks:
       - inmob-red
 
@@ -65,3 +113,4 @@ networks:
 
 volumes:
   pgdata:
+  rabbitmqdata:

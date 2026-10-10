@@ -1,6 +1,10 @@
 # docker compose del FRONTEND que usa el EC2 del frontend (54.156.18.1).
-# - nginx: static + proxy /api -> API_GATEWAY_URL (sin exponer puerto publico)
+# - nginx: solo entrega los archivos estaticos del bundle de Vite.
 # - caddy : termina TLS (Let's Encrypt) en 80/443 delante de nginx.
+#
+# El frontend ya NO hace de proxy hacia el backend. El navegador llama
+# directamente al API Gateway de AWS y el CORS lo resuelve la propia API, asi
+# que este compose no necesita la variable API_GATEWAY_URL.
 services:
 
   frontend:
@@ -8,9 +12,6 @@ services:
     container_name: inmobiliarias-frontend
     restart: unless-stopped
     environment:
-      # Sustituida por nginx al arrancar (nginx.conf template). Ej:
-      # http://34.204.64.107:8080
-      API_GATEWAY_URL: ${API_GATEWAY_URL}
       TZ: America/Santiago
     expose:
       - "80"

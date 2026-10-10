@@ -19,10 +19,17 @@ Este repo (Inmobiliarias-Infra) -> .github/workflows/deploy-*.yml
    │  SSH + scp
    ▼
 EC2 Backend 34.204.64.107            EC2 Frontend 54.156.18.1
-   db (postgres)                        nginx :80 (static + proxy /api)
-   inmobiliaria-service :8081            -> proxy /api a 34.204.64.107:8080
-   api-gateway :8080
+   db (postgres)                        caddy :443 -> nginx :80 (estaticos)
+   inmobiliaria-service :8081
+        ^
+        │ VPC Link
+   AWS API Gateway (HTTP API)
 ```
+
+> La API **ya no es una aplicacion propia**: es un API Gateway de AWS. Se
+> eliminaron el `api-gateway` de Spring Boot (puerto 8080) y el proxy `/api` de
+> nginx. El navegador llama directo a `execute-api...amazonaws.com` y el CORS lo
+> resuelve la propia API. Ver `backend/aws/README.md` en el repo de codigo.
 
 ## Flujo de trabajo
 
@@ -70,7 +77,10 @@ Variables en el repo de **código** (una por fila, `Settings -> Variables`):
 | `VITE_AZURE_AUTHORITY`   | `https://login.microsoftonline.com/<tenant>`                          |
 | `VITE_AZURE_REDIRECT_URI`| `https://TU-DOMINIO` (debe ser HTTPS; ver paso 5)                    |
 | `VITE_AZURE_API_SCOPE`   | `api://<client-id>/access_as_user`                                   |
-| `VITE_API_BASE_URL`      | (vacío)                                                               |
+| `VITE_API_BASE_URL`      | URL del API Gateway: `https://<api-id>.execute-api.<region>.amazonaws.com` |
+
+> `VITE_API_BASE_URL` debe ser la salida `ApiInvokeUrl` del stack de
+> CloudFormation (`backend/aws/api-gateway.yaml`). Sin barra final.
 
 En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 
@@ -85,16 +95,25 @@ En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 | `POSTGRES_DB`             | `inmobiliarias`                               |
 | `POSTGRES_USER`           | `inmob_admin`                                 |
 | `POSTGRES_PASSWORD`       | La misma del `.env` actual del backend         |
-| `JWT_SECRET`              | La misma del `.env` actual del backend         |
-| `ADMIN_PASSWORD`          | La misma del `.env` actual del backend         |
-| `API_GATEWAY_URL`         | `http://34.204.64.107:8080`                   |
+| `ADMIN_EMAIL`             | Correo del administrador (rol ADMIN)          |
+| `ADMIN_OID`               | Object ID del administrador (opcional)         |
+| `CORREDOR_EMAIL`          | Correo del corredor (rol CORREDOR)            |
+| `CORREDOR_OID`            | Object ID del corredor                        |
+| `RABBITMQ_USER`           | Usuario del broker RabbitMQ (no usar `guest`) |
+| `RABBITMQ_PASS`           | Password del broker RabbitMQ                  |
 | `SITENAME`                | `inmobiliariasduoc.duckdns.org`               |
 
-> Los valores de `POSTGRES_*`, `JWT_SECRET` y `ADMIN_PASSWORD` puedes copiarlos
-> del `.env` que ya está en el EC2 backend (`/home/ec2-user/backend/.env`).
+> **Ya no se usan** `JWT_SECRET` y `ADMIN_PASSWORD`: pertenecían al antiguo
+> `api-gateway` de Spring Boot, que emitía su propio JWT. Ahora el token lo
+> emite Entra ID y lo valida API Gateway.
+> **Tampoco** `API_GATEWAY_URL`: el frontend llama directo al API Gateway de AWS.
+
+> Los valores de `POSTGRES_*` y los correos/oids de rol puedes copiarlos del
+> `.env` que ya está en el EC2 backend (`/home/ec2-user/backend/.env`).
 
 ### 4. Abrir puertos en los Security Groups (AWS)
-- **Backend** (34.204.64.107): puerto `8080` (ya abierto).
+- **Backend** (34.204.64.107): puerto `8081`, pero **solo desde el VPC Link / NLB
+  dentro de la VPC**. Nunca `0.0.0.0/0` en 8081, y el `8080` ya no se usa.
 - **Frontend** (54.156.18.1): puerto `80` (HTTP) y más adelante `443` (HTTPS).
 
 ### 5. Configurar Azure Entra ID (una sola vez)
@@ -121,13 +140,21 @@ Puedes disparar el deploy a mano desde GitHub:
 sudo docker compose -p backend ps
 
 # Ver logs
-sudo docker logs -f api-gateway
 sudo docker logs -f inmobiliaria-service
 sudo docker logs -f inmobiliarias-db
 
-# Reiniciar solo el gateway
-sudo docker compose -p backend restart api-gateway
+# Reiniciar solo el microservicio
+sudo docker compose -p backend restart inmobiliaria-service
 
 # Backup de la base de datos
 docker exec inmobiliarias-db pg_dump -U inmob_admin inmobiliarias > backup_$(date +%F).sql
 ```
+
+## API Gateway (AWS)
+
+La API se despliega por CloudFormation con `backend/aws/api-gateway.yaml` del repo
+de codigo. Necesita `VpcId`, `VpcLinkSubnetIds` y `BackendEndpointDnsName`. El
+detalle paso a paso esta en `backend/aws/README.md`.
+
+> El SG del EC2 backend debe permitir TCP 8081 desde el VPC Link. Sin eso, la API
+> responde `504 Integration timeout`.

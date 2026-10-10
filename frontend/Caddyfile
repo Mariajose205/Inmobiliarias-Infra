@@ -1,6 +1,14 @@
 # Caddy genera y renueva automaticamente el certificado HTTPS (Let's Encrypt)
 # para el sitio. Todo el trafico HTTPS se reenvia a nginx (frontend:80).
 # La variable {$SITENAME} viene del entorno del contenedor (el .env).
+# preferred_chains: fuerza la cadena RSA (ISRG Root X1) que todos los
+# sistemas operativos reconocen, evitando el problema con ISRG Root X2/EC.
+
+{
+    preferred_chains {
+        root_common_name "ISRG Root X1"
+    }
+}
 
 {$SITENAME} {
     reverse_proxy frontend:80
