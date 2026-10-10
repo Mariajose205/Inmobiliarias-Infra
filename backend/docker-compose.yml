@@ -102,8 +102,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # service_started (no service_healthy): el microservicio arranca aunque el
+      # broker tarde o falle, porque reintenta la conexion en segundo plano. Asi
+      # un problema de RabbitMQ no tumba el catalogo ni la API.
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
     networks:
       - inmob-red
 
