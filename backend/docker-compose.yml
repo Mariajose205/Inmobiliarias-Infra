@@ -84,10 +84,14 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       # Identidad y rol que el microservicio usa para la matriz de permisos.
       # La autenticacion del token la hace API Gateway.
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_OID: ${ADMIN_OID}
-      CORREDOR_EMAIL: ${CORREDOR_EMAIL}
-      CORREDOR_OID: ${CORREDOR_OID}
+      # Se usa ${VAR:-default}: si el secreto de GitHub no esta configurado, el
+      # .env queda con la variable VACIA y Spring tomaria "" (ignorando el
+      # default de application-prod.yml), dejando a admin/corredor sin rol y
+      # provocando 403. Con ":-" el compose usa el default cuando esta vacia.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-administrador@inmobiliariaduoc.onmicrosoft.com}
+      ADMIN_OID: ${ADMIN_OID:-5ce11c6e-c796-41eb-b8ed-1872878cd197}
+      CORREDOR_EMAIL: ${CORREDOR_EMAIL:-Corredor@InmobiliariaDuoc.onmicrosoft.com}
+      CORREDOR_OID: ${CORREDOR_OID:-0a73de94-2722-4221-836c-bd7f3af16980}
       # Conexion al broker y al SMTP dentro de la red del compose.
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
