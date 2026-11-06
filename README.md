@@ -20,9 +20,12 @@ Este repo (Inmobiliarias-Infra) -> .github/workflows/deploy-*.yml
    ▼
 EC2 Backend 34.204.64.107            EC2 Frontend 54.156.18.1
    db (postgres)                        caddy :443 -> nginx :80 (estaticos)
+   rabbitmq (informes)
+   kafka (wishlist)
    inmobiliaria-service :8081
+   wishlist-service :8082
         ^
-        │ VPC Link
+        │ VPC Link (un NLB interno por microservicio)
    AWS API Gateway (HTTP API)
 ```
 
@@ -112,8 +115,9 @@ En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 > `.env` que ya está en el EC2 backend (`/home/ec2-user/backend/.env`).
 
 ### 4. Abrir puertos en los Security Groups (AWS)
-- **Backend** (34.204.64.107): puerto `8081`, pero **solo desde el VPC Link / NLB
-  dentro de la VPC**. Nunca `0.0.0.0/0` en 8081, y el `8080` ya no se usa.
+- **Backend** (34.204.64.107): puertos `8081` y `8082`, pero **solo desde el
+  CIDR de la VPC / VPC Link / NLB**. Nunca `0.0.0.0/0` en 8081 ni 8082, y el
+  `8080` ya no se usa.
 - **Frontend** (54.156.18.1): puerto `80` (HTTP) y más adelante `443` (HTTPS).
 
 ### 5. Configurar Azure Entra ID (una sola vez)
@@ -156,5 +160,7 @@ La API se despliega por CloudFormation con `backend/aws/api-gateway.yaml` del re
 de codigo. Necesita `VpcId`, `VpcLinkSubnetIds` y `BackendEndpointDnsName`. El
 detalle paso a paso esta en `backend/aws/README.md`.
 
-> El SG del EC2 backend debe permitir TCP 8081 desde el VPC Link. Sin eso, la API
-> responde `504 Integration timeout`.
+> El SG del EC2 backend debe permitir TCP 8081 **y 8082** desde el VPC Link. Sin
+> el 8081, la API responde `504 Integration timeout`; sin el 8082, el target group
+> de wishlist queda *unhealthy* y `/api/wishlist/*` responde `503 Service
+> Unavailable` (incluso rutas públicas como `/api/wishlist/comunas`).

@@ -64,6 +64,49 @@ services:
     networks:
       - inmob-red
 
+  # Kafka en modo KRaft (sin Zookeeper): broker del flujo de lista de deseos
+  # (wishlist-service). El puerto 9092 NO se publica al host: solo lo consumen
+  # los otros contenedores por la red interna inmob-red. Asi el broker no queda
+  # expuesto aunque el Security Group del EC2 sea permisivo.
+  #
+  # Nota: en la imagen apache/kafka, si se define cualquier variable KAFKA_* hay
+  # que declarar el juego completo de configuracion requerida; por eso estan
+  # todas las claves del modo combinado (broker + controller).
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: inmobiliarias-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_DEFAULT_MIN_INSYNC_REPLICAS: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # Limita el heap para que Kafka quepa junto a los dos microservicios,
+      # PostgreSQL y RabbitMQ en un EC2 pequeno.
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      TZ: America/Santiago
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - inmob-red
+
   # IMPORTANTE: el puerto 8081 se publica para que API Gateway lo alcance por el
   # VPC Link, pero NO debe quedar abierto a internet. El Security Group del EC2
   # debe permitir el puerto 8081 solo desde el VPC Link / NLB y desde la VPC, y
@@ -97,6 +140,9 @@ services:
       RABBITMQ_PORT: "5672"
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      # Kafka: el microservicio publica el evento "propiedad creada" que consume
+      # wishlist-service para generar novedades y alertas por comuna.
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       MAIL_HOST: mailhog
       MAIL_PORT: "1025"
       INFORMES_DIR: /app/informes
@@ -111,6 +157,52 @@ services:
       # un problema de RabbitMQ no tumba el catalogo ni la API.
       rabbitmq:
         condition: service_started
+      kafka:
+        condition: service_started
+    networks:
+      - inmob-red
+
+  # Microservicio de lista de deseos (favoritos, alertas y novedades).
+  #
+  # El puerto 8082 se publica para que el NLB interno de wishlist (creado por
+  # backend/aws/api-gateway.yaml del repo de codigo) lo alcance por el VPC Link.
+  # Sin este contenedor el target group queda unhealthy y API Gateway responde
+  # 503 Service Unavailable en todas las rutas /api/wishlist/*.
+  #
+  # El Security Group del EC2 debe permitir TCP 8082 desde el CIDR de la VPC
+  # (igual que el 8081). Nunca desde 0.0.0.0/0.
+  wishlist-service:
+    image: mariacarrero/wishlist-service:latest
+    container_name: wishlist-service
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # Comparte la base PostgreSQL con inmobiliaria-service; Hibernate crea sus
+      # propias tablas (favoritos, alertas_comuna, novedades) con ddl-auto=update.
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MAIL_HOST: mailhog
+      MAIL_PORT: "1025"
+      # Identidad con la que se resuelve el rol ADMIN/CORREDOR/PUBLIC.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-administrador@inmobiliariaduoc.onmicrosoft.com}
+      ADMIN_OID: ${ADMIN_OID:-5ce11c6e-c796-41eb-b8ed-1872878cd197}
+      CORREDOR_EMAIL: ${CORREDOR_EMAIL:-Corredor@InmobiliariaDuoc.onmicrosoft.com}
+      CORREDOR_OID: ${CORREDOR_OID:-0a73de94-2722-4221-836c-bd7f3af16980}
+      TZ: America/Santiago
+    ports:
+      - "8082:8082"
+    depends_on:
+      db:
+        condition: service_healthy
+      # service_started: el consumidor de Kafka reintenta la conexion si el
+      # broker aun no esta listo, y asi un fallo de Kafka no impide que el
+      # microservicio arranque y responda el resto de sus endpoints.
+      kafka:
+        condition: service_started
+      mailhog:
+        condition: service_started
     networks:
       - inmob-red
 
@@ -121,3 +213,4 @@ networks:
 volumes:
   pgdata:
   rabbitmqdata:
+  kafka-data:
