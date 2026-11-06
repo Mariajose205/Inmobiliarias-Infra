@@ -50,6 +50,9 @@ jobs:
           username: ${{ secrets.SSH_USER_BACKEND }}
           key: ${{ secrets.SSH_PRIVATE_KEY_BACKEND }}
           port: 22
+          # Sin esto, un fallo de "docker compose up" no marcaba el workflow en
+          # rojo y el deploy parecia exitoso aunque kafka no arrancara.
+          script_stop: true
           
           script: |
             cd /opt/inmobiliarias/backend
@@ -58,3 +61,7 @@ jobs:
             sudo docker compose -p backend up -d
             echo "--- estado ---"
             sudo docker compose -p backend ps
+            # Falla el deploy si kafka o wishlist no quedaron corriendo.
+            sudo docker compose -p backend ps --status running --services | grep -qx kafka
+            sudo docker compose -p backend ps --status running --services | grep -qx wishlist-service
+            echo "kafka y wishlist-service estan corriendo"

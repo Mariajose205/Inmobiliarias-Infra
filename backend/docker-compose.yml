@@ -78,6 +78,10 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
+      # Obligatorio en modo KRaft: la imagen aborta con "CLUSTER_ID environment
+      # variable not set" si falta. Es un UUID base64 fijo del cluster, no un
+      # secreto; debe mantenerse igual entre reinicios y despliegues.
+      CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
