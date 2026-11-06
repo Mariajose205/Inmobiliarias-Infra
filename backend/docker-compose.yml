@@ -83,7 +83,12 @@ services:
       # secreto; debe mantenerse igual entre reinicios y despliegues.
       CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      # No usar 0.0.0.0 en los listeners: en KRaft el listener CONTROLLER se
+      # hereda como advertised cuando no se declara, y Kafka rechaza el
+      # arranque con "advertised.listeners cannot use the nonroutable
+      # meta-address 0.0.0.0". Con "://:puerto" Kafka escucha en todas las
+      # interfaces y anuncia el hostname del contenedor.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
