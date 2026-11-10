@@ -28,13 +28,29 @@ services:
     networks:
       - inmob-red
 
-  # RabbitMQ: broker del flujo de informes (exchange fanout + direct, colas y
-  # DLQ). El 5672 (AMQP) queda interno a la red del compose; el 15672 (consola)
+  # RabbitMQ: broker del flujo de informes (exchange fanout + direct + topic,
+  # colas y DLQ) corriendo como CLUSTER de dos nodos (rabbit1 + rabbit2).
+  # El 5672 (AMQP) queda interno a la red del compose; el 15672 (consola)
   # se publica para administracion y conviene restringirlo por Security Group.
+  #
+  # Formacion del cluster (validada en el EC2): este nodo NO lleva
+  # configuracion de peer discovery, asi que arranca standalone de inmediato.
+  # Es rabbitmq2 quien lo descubre y se une (ver su servicio). Si ambos nodos
+  # tuvieran la lista de peers se esperarian mutuamente y el cluster nunca
+  # se formaria.
+  #
+  # La cookie Erlang compartida viaja en ./rabbitmq/erlang.cookie y se copia
+  # al volumen ANTES de arrancar el server: la imagen oficial ya no acepta
+  # RABBITMQ_ERLANG_COOKIE (quitada en 3.9) y montarla como configs: de solo
+  # lectura rompe el entrypoint (chown sobre read-only). El tr -d '\r' evita
+  # problemas si git convierte el archivo a CRLF.
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: inmobiliarias-rabbitmq
     restart: unless-stopped
+    # Hostname fijo: el nombre del nodo Erlang (rabbit@rabbit1) no debe cambiar
+    # entre recreaciones del contenedor, o RabbitMQ arrancaria con mnesia vacio.
+    hostname: rabbit1
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
@@ -44,13 +60,64 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
+      - ./rabbitmq:/rabbitmq-setup:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        tr -d '\r' < /rabbitmq-setup/erlang.cookie > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 600 /var/lib/rabbitmq/.erlang.cookie &&
+        exec docker-entrypoint.sh rabbitmq-server
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
-      - inmob-red
+      inmob-red:
+        aliases:
+          # Alias para que rabbit@rabbit1 resuelva desde rabbitmq2.
+          - rabbit1
+
+  # Segundo nodo del cluster RabbitMQ. Se une SOLO al arrancar mediante peer
+  # discovery "classic config" (./rabbitmq/rabbitmq-cluster.conf), que lista
+  # los dos nodos; no hace falta rabbitmqctl join_cluster manual. Publica su
+  # consola de administracion en el 15673 del host para verificar el cluster
+  # desde el navegador (requiere regla de SG Custom TCP 15673 desde My IP).
+  rabbitmq2:
+    image: rabbitmq:3.13-management-alpine
+    container_name: inmobiliarias-rabbitmq2
+    restart: unless-stopped
+    hostname: rabbit2
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      TZ: America/Santiago
+    ports:
+      - "15673:15672"
+    volumes:
+      - rabbitmq2data:/var/lib/rabbitmq
+      - ./rabbitmq:/rabbitmq-setup:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        tr -d '\r' < /rabbitmq-setup/erlang.cookie > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 600 /var/lib/rabbitmq/.erlang.cookie &&
+        tr -d '\r' < /rabbitmq-setup/rabbitmq-cluster.conf > /etc/rabbitmq/conf.d/20-cluster.conf &&
+        exec docker-entrypoint.sh rabbitmq-server
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      inmob-red:
+        aliases:
+          - rabbit2
 
   # Servidor SMTP de captura. Reemplazar por un SMTP real (SES, etc.) en un
   # entorno productivo real; aqui permite ver los correos en http://<EC2>:8025.
@@ -246,4 +313,9 @@ networks:
 volumes:
   pgdata:
   rabbitmqdata:
+  rabbitmq2data:
   kafka-data:
+
+# Los archivos del cluster RabbitMQ (erlang.cookie y rabbitmq-cluster.conf)
+# viven en ./rabbitmq/ y se montan en los nodos via bind mount; el deploy
+# copia el directorio backend/ completo al EC2, asi que llegan solos.
