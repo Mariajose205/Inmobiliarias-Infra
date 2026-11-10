@@ -131,14 +131,20 @@ services:
     networks:
       - inmob-red
 
-  # Kafka en modo KRaft (sin Zookeeper): broker del flujo de lista de deseos
-  # (wishlist-service). El puerto 9092 NO se publica al host: solo lo consumen
-  # los otros contenedores por la red interna inmob-red. Asi el broker no queda
-  # expuesto aunque el Security Group del EC2 sea permisivo.
+  # Kafka en modo KRaft (sin Zookeeper): cluster de TRES brokers del flujo de
+  # lista de deseos (wishlist-service). El 9092 (broker) y 9093 (controller)
+  # NO se publican al host: solo los usan los otros contenedores por la red
+  # interna inmob-red. Asi el cluster no queda expuesto aunque el Security
+  # Group del EC2 sea permisivo.
   #
   # Nota: en la imagen apache/kafka, si se define cualquier variable KAFKA_* hay
   # que declarar el juego completo de configuracion requerida; por eso estan
   # todas las claves del modo combinado (broker + controller).
+  #
+  # Los tres nodos comparten CLUSTER_ID y la MISMA lista de quorum voters
+  # (mayoria 2 de 3). Este servicio conserva el volumen kafka-data, asi que
+  # los topicos existentes sobreviven: kafka2 y kafka3 replican su metadata
+  # al unirse al quorum.
   kafka:
     image: apache/kafka:3.9.0
     container_name: inmobiliarias-kafka
@@ -147,7 +153,8 @@ services:
       KAFKA_NODE_ID: 1
       # Obligatorio en modo KRaft: la imagen aborta con "CLUSTER_ID environment
       # variable not set" si falta. Es un UUID base64 fijo del cluster, no un
-      # secreto; debe mantenerse igual entre reinicios y despliegues.
+      # secreto; debe mantenerse igual entre reinicios, despliegues y nuevos
+      # brokers (kafka2/kafka3 usan el mismo para unirse a ESTE cluster).
       CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
       KAFKA_PROCESS_ROLES: broker,controller
       # No usar 0.0.0.0 en los listeners: en KRaft el listener CONTROLLER se
@@ -160,21 +167,97 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Quorum KRaft de 3 controllers (mayoria 2 de 3). La lista debe ser
+      # IDENTICA en los tres brokers, y los tres deben arrancar juntos.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093,2@kafka2:9093,3@kafka3:9093
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Con 3 brokers: replicas=3 y min.insync=2 (acks=all tolera 1 broker caido).
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_DEFAULT_MIN_INSYNC_REPLICAS: 1
+      KAFKA_DEFAULT_MIN_INSYNC_REPLICAS: 2
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # Limita el heap para que Kafka quepa junto a los dos microservicios,
-      # PostgreSQL y RabbitMQ en un EC2 pequeno.
+      # Limita el heap para que los 3 brokers quepan junto a los dos
+      # microservicios, PostgreSQL y el cluster RabbitMQ en un EC2 pequeno
+      # (con ayuda del swap del host).
       KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
       TZ: America/Santiago
     volumes:
       - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - inmob-red
+
+  # Segundo broker del cluster Kafka (nodo 2, broker + controller). Volumen
+  # propio kafka2-data; se une al quorum por CLUSTER_ID compartido.
+  kafka2:
+    image: apache/kafka:3.9.0
+    container_name: inmobiliarias-kafka2
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 2
+      CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_DEFAULT_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      TZ: America/Santiago
+    volumes:
+      - kafka2-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - inmob-red
+
+  # Tercer broker del cluster Kafka (nodo 3, broker + controller). Volumen
+  # propio kafka3-data; completa el quorum de mayoria 2-de-3.
+  kafka3:
+    image: apache/kafka:3.9.0
+    container_name: inmobiliarias-kafka3
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 3
+      CLUSTER_ID: '4L6g3nShT-eMCtK--X86sw'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_DEFAULT_MIN_INSYNC_REPLICAS: 2
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      TZ: America/Santiago
+    volumes:
+      - kafka3-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
       interval: 10s
@@ -217,8 +300,9 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
       # Kafka: el microservicio publica el evento "propiedad creada" que consume
-      # wishlist-service para generar novedades y alertas por comuna.
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # wishlist-service para generar novedades y alertas por comuna. La lista
+      # de los 3 brokers del cluster permite arrancar aunque uno este caido.
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092,kafka2:9092,kafka3:9092
       MAIL_HOST: mailhog
       MAIL_PORT: "1025"
       INFORMES_DIR: /app/informes
@@ -258,7 +342,9 @@ services:
       DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Cluster Kafka de 3 brokers: el consumidor puede arrancar conectandose
+      # a cualquiera de ellos.
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092,kafka2:9092,kafka3:9092
       MAIL_HOST: mailhog
       MAIL_PORT: "1025"
       # Identidad con la que se resuelve el rol ADMIN/CORREDOR/PUBLIC.
@@ -295,7 +381,8 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_CLUSTERS_0_NAME: inmobiliarias
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      # Los 3 brokers: la pestana Brokers muestra el cluster completo.
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092,kafka2:9092,kafka3:9092
       JAVA_OPTS: "-Xmx192m -Xms64m"
       TZ: America/Santiago
     ports:
@@ -315,6 +402,8 @@ volumes:
   rabbitmqdata:
   rabbitmq2data:
   kafka-data:
+  kafka2-data:
+  kafka3-data:
 
 # Los archivos del cluster RabbitMQ (erlang.cookie y rabbitmq-cluster.conf)
 # viven en ./rabbitmq/ y se montan en los nodos via bind mount; el deploy
