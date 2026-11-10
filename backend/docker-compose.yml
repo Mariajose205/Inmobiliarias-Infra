@@ -215,6 +215,30 @@ services:
     networks:
       - inmob-red
 
+  # UI de administracion de Kafka (topics, particiones, consumer groups y
+  # mensajes en vivo). Escucha en el 8080 del host y NO tiene autenticacion
+  # propia: el Security Group del EC2 debe permitir el 8080 SOLO desde la IP
+  # del administrador (My IP), nunca 0.0.0.0/0.
+  #
+  # El heap esta limitado porque este EC2 tambien corre PostgreSQL, RabbitMQ,
+  # Kafka y los dos microservicios en ~2 GB de RAM.
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: inmobiliarias-kafka-ui
+    restart: unless-stopped
+    environment:
+      KAFKA_CLUSTERS_0_NAME: inmobiliarias
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      JAVA_OPTS: "-Xmx192m -Xms64m"
+      TZ: America/Santiago
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_started
+    networks:
+      - inmob-red
+
 networks:
   inmob-red:
     driver: bridge
