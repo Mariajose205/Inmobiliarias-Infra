@@ -18,7 +18,7 @@ Build y push de imagenes a Docker Hub  (mariacarrero/*:latest)
 Este repo (Inmobiliarias-Infra) -> .github/workflows/deploy-*.yml
    │  SSH + scp
    ▼
-EC2 Backend 34.204.64.107            EC2 Frontend 54.156.18.1
+EC2 Backend 54.88.89.184            EC2 Frontend 98.83.252.223
    db (postgres)                        caddy :443 -> nginx :80 (estaticos)
    rabbitmq (informes)
    kafka (wishlist)
@@ -90,10 +90,10 @@ En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 | Nombre                    | Valor                                         |
 |---------------------------|-----------------------------------------------|
 | `SSH_PRIVATE_KEY_BACKEND` | Contenido de `ClavesBackend.pem`              |
-| `SSH_HOST_BACKEND`        | `34.204.64.107`                               |
+| `SSH_HOST_BACKEND`        | `54.88.89.184`                                |
 | `SSH_USER_BACKEND`        | `ec2-user`                                    |
 | `SSH_PRIVATE_KEY_FRONTEND`| Contenido de `ClavesFrontend.pem`             |
-| `SSH_HOST_FRONTEND`       | `54.156.18.1`                                 |
+| `SSH_HOST_FRONTEND`       | `98.83.252.223`                               |
 | `SSH_USER_FRONTEND`       | `ec2-user`                                    |
 | `POSTGRES_DB`             | `inmobiliarias`                               |
 | `POSTGRES_USER`           | `inmob_admin`                                 |
@@ -115,10 +115,10 @@ En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 > `.env` que ya está en el EC2 backend (`/home/ec2-user/backend/.env`).
 
 ### 4. Abrir puertos en los Security Groups (AWS)
-- **Backend** (34.204.64.107): puertos `8081` y `8082`, pero **solo desde el
+- **Backend** (54.88.89.184): puertos `8081` y `8082`, pero **solo desde el
   CIDR de la VPC / VPC Link / NLB**. Nunca `0.0.0.0/0` en 8081 ni 8082, y el
   `8080` ya no se usa.
-- **Frontend** (54.156.18.1): puerto `80` (HTTP) y más adelante `443` (HTTPS).
+- **Frontend** (98.83.252.223): puerto `80` (HTTP) y más adelante `443` (HTTPS).
 
 ### 5. Configurar Azure Entra ID (una sola vez)
 El `redirectUri` que registres en la app de Entra ID debe coincidir **exactamente**

@@ -1,4 +1,4 @@
-# docker compose del FRONTEND que usa el EC2 del frontend (54.156.18.1).
+# docker compose del FRONTEND que usa el EC2 del frontend (98.83.252.223).
 # - nginx: solo entrega los archivos estaticos del bundle de Vite.
 # - caddy : termina TLS (Let's Encrypt) en 80/443 delante de nginx.
 #
