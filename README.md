@@ -20,10 +20,11 @@ Este repo (Inmobiliarias-Infra) -> .github/workflows/deploy-*.yml
    ▼
 EC2 Backend 54.88.89.184            EC2 Frontend 98.83.252.223
    db (postgres)                        caddy :443 -> nginx :80 (estaticos)
-   rabbitmq (informes)
-   kafka (wishlist)
+   rabbitmq + rabbitmq2 (cluster 2 nodos, informes)
+   kafka + kafka2 + kafka3 (cluster KRaft 3 brokers, wishlist)
    inmobiliaria-service :8081
    wishlist-service :8082
+   kafka-ui :8080 (administracion de topics y particiones)
         ^
         │ VPC Link (un NLB interno por microservicio)
    AWS API Gateway (HTTP API)
@@ -116,9 +117,11 @@ En el repo de **infra** (`Inmobiliarias-Infra`) secretos:
 
 ### 4. Abrir puertos en los Security Groups (AWS)
 - **Backend** (54.88.89.184): puertos `8081` y `8082`, pero **solo desde el
-  CIDR de la VPC / VPC Link / NLB**. Nunca `0.0.0.0/0` en 8081 ni 8082, y el
-  `8080` ya no se usa.
-- **Frontend** (98.83.252.223): puerto `80` (HTTP) y más adelante `443` (HTTPS).
+  CIDR de la VPC / VPC Link / NLB**. Nunca `0.0.0.0/0` en 8081 ni 8082.
+  Además, **solo desde My IP** (consolas de administración sin login propio o
+  con credenciales del lab): `15672` y `15673` (RabbitMQ), `8025` (MailHog) y
+  `8080` (kafka-ui). Nunca abrir esos a `0.0.0.0/0`.
+- **Frontend** (98.83.252.223): puertos `80` (HTTP) y `443` (HTTPS).
 
 ### 5. Configurar Azure Entra ID (una sola vez)
 El `redirectUri` que registres en la app de Entra ID debe coincidir **exactamente**
@@ -136,6 +139,40 @@ Para producción con HTTPS sobre este mismo EC2 lo más simple es un proxy
 
 Puedes disparar el deploy a mano desde GitHub:
 `Actions -> Deploy Backend / Deploy Frontend -> Run workflow`.
+
+## Clústeres del backend
+
+### RabbitMQ (2 nodos)
+
+`rabbitmq` (nodo `rabbit@rabbit1`) y `rabbitmq2` (nodo `rabbit@rabbit2`) forman
+un clúster al arrancar, sin pasos manuales:
+
+- comparten la **cookie Erlang** (`backend/rabbitmq/erlang.cookie`, copiada al
+  volumen antes de iniciar el server porque la imagen oficial ya no acepta
+  `RABBITMQ_ERLANG_COOKIE`),
+- `rabbitmq2` se une por **peer discovery classic config**
+  (`backend/rabbitmq/rabbitmq-cluster.conf`, montado como `20-cluster.conf`),
+- `rabbitmq` NO lleva esa configuración: si ambos nodos esperaran mutuamente,
+  el clúster nunca se formaría.
+
+Consolas: nodo 1 en `:15672` y nodo 2 en `:15673` (ambas con regla de SG desde
+My IP). En Overview se ven los 2 nodos del clúster.
+
+### Kafka (3 brokers, KRaft)
+
+`kafka`, `kafka2` y `kafka3` comparten `CLUSTER_ID` y el quórum de controllers
+`1@kafka:9093,2@kafka2:9093,3@kafka3:9093` (mayoría 2 de 3). Los topics
+declarados por `wishlist-service` tienen replication factor 3 y
+`min.insync.replicas=2` (los productores usan `acks=all`).
+
+Los puertos 9092/9093 **no se publican** al host: todo el tráfico es interno de
+la red del compose. La administración se hace con kafka-ui (`:8080`, regla de
+SG desde My IP) o `docker exec inmobiliarias-kafka /opt/kafka/bin/…`.
+
+Si se agregan topics nuevos y quedan con RF=1, se sube a 3 con
+`kafka-reassign-partitions.sh` (ver historial de este repo) y luego
+`kafka-leader-election.sh --election-type preferred --all-topic-partitions`
+para balancear los líderes.
 
 ## Scripts útiles (en el EC2)
 
