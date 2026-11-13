@@ -140,6 +140,11 @@ Para producción con HTTPS sobre este mismo EC2 lo más simple es un proxy
 Puedes disparar el deploy a mano desde GitHub:
 `Actions -> Deploy Backend / Deploy Frontend -> Run workflow`.
 
+> Si el paso "Copiar docker-compose y .env al EC2 backend" falla con
+> `Permission denied`, revisa que los archivos del compose sean del usuario SSH
+> del deploy (no de `root`). Por ejemplo:
+> `sudo chown -R ec2-user:ec2-user /opt/inmobiliarias/backend/rabbitmq`.
+
 ## Clústeres del backend
 
 ### RabbitMQ (2 nodos)
@@ -173,6 +178,42 @@ Si se agregan topics nuevos y quedan con RF=1, se sube a 3 con
 `kafka-reassign-partitions.sh` (ver historial de este repo) y luego
 `kafka-leader-election.sh --election-type preferred --all-topic-partitions`
 para balancear los líderes.
+
+## Resumen de novedades (digest)
+
+Para no saturar al usuario con un correo por cada propiedad, `wishlist-service`
+acumula las novedades de las comunas que sigue y las envía agrupadas:
+
+```
+Propiedad creada → propiedades-nuevas
+   → PropiedadNuevaNotificador guarda 1 Novedad PENDIENTE por usuario
+      (resumen_id = null, sin correo)
+   → al juntar NOTIF_UMBRAL pendientes (6 por defecto):
+        ResumenNovedades + 1 evento en notificaciones-sistema
+        → NotificacionDispatchConsumer → 1 correo con TODAS las propiedades
+   → barrido diario (NOTIF_CRON, 20:00 America/Santiago por defecto):
+        agrupa lo que quedó pendiente (1..5) para que nadie quede sin aviso
+```
+
+- La app también agrupa: `GET /api/wishlist/novedades` devuelve una entrada por
+  resumen (`wishlist_novedades_resumen`) con el detalle de sus propiedades, y
+  `DELETE /api/wishlist/novedades/{id}` descarta el resumen completo.
+- La clave Kafka del resumen es el **correo del destinatario**, para que los
+  resúmenes de un mismo usuario se consuman en orden.
+- Variables en `backend/docker-compose.yml`:
+
+  | Variable | Default | Para qué |
+  |---|---|---|
+  | `NOTIF_UMBRAL` | `6` | pendientes que disparan el resumen inmediato |
+  | `NOTIF_CRON` | `0 0 20 * * *` | barrido diario (formato Spring, con segundos) |
+  | `NOTIF_ZONA` | `America/Santiago` | zona horaria del CRON |
+
+- Para forzar el barrido sin esperar al CRON (solo ADMIN):
+
+  ```bash
+  curl -X POST -H "X-User: administrador@inmobiliariaduoc.onmicrosoft.com" \
+    http://localhost:8082/api/admin/notificaciones/resumen
+  ```
 
 ## Scripts útiles (en el EC2)
 
